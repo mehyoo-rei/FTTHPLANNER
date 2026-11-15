@@ -444,6 +444,59 @@
   var lastTopoRefresh = null;
 
   var SPLIT_LOSS = {2:3.7,4:7.3,8:10.6,16:14.0,32:17.5,64:21.5};
+  // FBT Tap/Thru ratios: {label: {tap: dB, thru: dB}}
+  var FBT_RATIOS = {
+    '50/50': {tap: 3.4, thru: 3.4},
+    '40/60': {tap: 4.4, thru: 2.5},
+    '30/70': {tap: 5.7, thru: 1.8},
+    '20/80': {tap: 7.4, thru: 1.1},
+    '10/90': {tap: 10.5, thru: 0.6},
+    '2/98':  {tap: 17.5, thru: 0.2}
+  };
+  // Cassette (Unbalanced 1:8 + Tap/Thru or Standard 1:8)
+  // Using 1:8 base insertion loss (~10.5 dB) + tap/thru ratio loss, or standard 1:8 (10.6 dB)
+  var CASSETTE_RATIOS = {
+    '92/8':  {tap: 11.5, thru: 0.8},
+    '90/10': {tap: 10.5, thru: 1.0},
+    '85/15': {tap: 8.5,  thru: 1.8},
+    '80/20': {tap: 7.4,  thru: 2.2},
+    '75/25': {tap: 6.2,  thru: 2.8},
+    '70/30': {tap: 5.7,  thru: 3.2},
+    '65/35': {tap: 4.9,  thru: 4.0},
+    '60/40': {tap: 4.4,  thru: 4.4},
+    '55/45': {tap: 3.8,  thru: 5.0},
+    '50/50': {tap: 3.4,  thru: 3.4},
+    '1:8':   {tap: 10.6, thru: 10.6}
+  };
+
+  function getSplitterLoss(n, isThru){
+    if(!n) return 0;
+    if(n.type === 'nap'){
+      return n.splitRatio ? (SPLIT_LOSS[n.splitRatio] || 0) : 0;
+    }
+    if(n.type === 'splitter'){
+      var r = FBT_RATIOS[n.fbtRatio || '50/50'];
+      if(!r) return 0;
+      return isThru ? r.thru : r.tap;
+    }
+    if(n.type === 'cassette'){
+      var c = CASSETTE_RATIOS[n.cassetteRatio || '1:8'];
+      if(!c) return 0;
+      return isThru ? c.thru : c.tap;
+    }
+    return 0;
+  }
+
+  function formatSplitLabel(n){
+    if(n.type === 'nap') return n.splitRatio ? ('1:' + n.splitRatio) : 'passthrough';
+    if(n.type === 'splitter') return (n.fbtRatio || '50/50') + (n.portMode === 'thru' ? ' (Thru)' : ' (Tap)');
+    if(n.type === 'cassette'){
+      var cr = n.cassetteRatio || '1:8';
+      if(cr === '1:8') return '1:8 (Equal)';
+      return cr + (n.portMode === 'thru' ? ' (Thru)' : ' (Tap)');
+    }
+    return '';
+  }
   var PALETTE = ['#17c3b2','#f2a93b','#8b7cf6','#5aa9ff','#ef5b6f','#3ecf7e'];
 
   function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
@@ -556,7 +609,10 @@
       id:id, type:type, name: prefixMap[type] + '-' + num,
       lat:lat, lng:lng, notes:'',
       txDbm: type==='olt' ? settings.txDbm : undefined,
-      splitRatio: (type==='nap' || type==='splitter' || type==='cassette') ? 8 : undefined,
+      splitRatio: type==='nap' ? 8 : undefined,
+      fbtRatio: type==='splitter' ? '50/50' : undefined,
+      cassetteRatio: type==='cassette' ? '1:8' : undefined,
+      portMode: (type==='splitter' || type==='cassette') ? 'tap' : undefined,
       customer: type==='drop' ? '' : undefined,
     };
     state.nodes[id] = node;
@@ -722,13 +778,18 @@
     }
     chain.reverse();
     var loss = 0, stages = [];
-    chain.forEach(function(id){
+    chain.forEach(function(id, idx){
       var n = state.nodes[id];
       if(!n) return;
-      if((n.type==='nap' || n.type==='splitter' || n.type==='cassette') && n.splitRatio){
-        var l = SPLIT_LOSS[n.splitRatio] || 0;
-        loss += l;
-        stages.push({name:n.name, type:n.type, ratio:n.splitRatio, loss:l});
+      if(n.type==='nap' || n.type==='splitter' || n.type==='cassette'){
+        // If this node is an intermediate pass-through to a downstream node in the chain,
+        // use its configured portMode (or 'thru' if explicitly set, defaulting to node's portMode).
+        var isThru = (n.portMode === 'thru');
+        var l = getSplitterLoss(n, isThru);
+        if(l > 0){
+          loss += l;
+          stages.push({name:n.name, type:n.type, ratio:formatSplitLabel(n), loss:l});
+        }
       }
     });
     return {loss:loss, stages:stages};
@@ -875,7 +936,7 @@
     if(n.type==='olt'){
       badge = '<span class="topo-pill online">Online</span>';
     } else if(n.type==='nap' || n.type==='splitter' || n.type==='cassette'){
-      if(n.splitRatio) sub += ' · 1:'+n.splitRatio;
+      sub += ' · ' + formatSplitLabel(n);
       var b = nodeBudget(n, tr);
       if(b){
         var cls = n.type==='nap' ? b.status : 'info';
@@ -1017,7 +1078,7 @@
         var badge = '';
         if(n.type==='nap' || n.type==='splitter' || n.type==='cassette'){
           var b = nodeBudget(n, tr);
-          var ratioTxt = n.splitRatio ? ('1:'+n.splitRatio) : 'passthrough';
+          var ratioTxt = formatSplitLabel(n);
           meta = b ? (ratioTxt+' · '+b.distKm.toFixed(2)+'km') : ratioTxt;
           if(n.type==='nap'){
             badge = '<span class="badge '+(b?b.status:'none')+'">'+(b?b.rx.toFixed(1)+' dBm':'no link')+'</span>';
@@ -1068,19 +1129,45 @@
         html += fieldNumber('nTx','Tx power (dBm)', n.txDbm!==undefined?n.txDbm:settings.txDbm, 0.1);
       }
       if(n.type==='nap' || n.type==='splitter' || n.type==='cassette'){
-        var ratioOptions = [2,4,8,16,32,64].map(function(r){
-          return '<option value="'+r+'"'+(n.splitRatio===r?' selected':'')+'>1:'+r+'</option>';
-        }).join('');
         if(n.type==='nap'){
+          var ratioOptions = [2,4,8,16,32,64].map(function(r){
+            return '<option value="'+r+'"'+(n.splitRatio===r?' selected':'')+'>1:'+r+'</option>';
+          }).join('');
           ratioOptions = '<option value="0"'+(!n.splitRatio?' selected':'')+'>None (passthrough)</option>' + ratioOptions;
+          html += '<div class="field-row"><label>Onboard split ratio</label><select id="nSplit">' + ratioOptions + '</select></div>';
+        } else if(n.type==='splitter'){
+          var curFbt = n.fbtRatio || '50/50';
+          var fbtOpts = Object.keys(FBT_RATIOS).map(function(k){
+            var info = FBT_RATIOS[k];
+            return '<option value="'+k+'"'+(curFbt===k?' selected':'')+'>'+k+' (Tap: '+info.tap+' dB / Thru: '+info.thru+' dB)</option>';
+          }).join('');
+          html += '<div class="field-row"><label>FBT Splitter Ratio</label><select id="nFbtRatio">' + fbtOpts + '</select></div>';
+          var curPort = n.portMode || 'tap';
+          html += '<div class="field-row"><label>Active Output Leg</label><select id="nPortMode">' +
+            '<option value="tap"'+(curPort==='tap'?' selected':'')+'>Tap / Drop leg ('+FBT_RATIOS[curFbt].tap+' dB)</option>' +
+            '<option value="thru"'+(curPort==='thru'?' selected':'')+'>Through / Express leg ('+FBT_RATIOS[curFbt].thru+' dB)</option>' +
+            '</select></div>';
+        } else if(n.type==='cassette'){
+          var curCas = n.cassetteRatio || '1:8';
+          var casOpts = Object.keys(CASSETTE_RATIOS).map(function(k){
+            var info = CASSETTE_RATIOS[k];
+            var lbl = k === '1:8' ? '1:8 (Walay ratio / Equal - 10.6 dB)' : (k + ' (Tap: '+info.tap+' dB / Thru: '+info.thru+' dB)');
+            return '<option value="'+k+'"'+(curCas===k?' selected':'')+'>'+lbl+'</option>';
+          }).join('');
+          html += '<div class="field-row"><label>Cassette Ratio</label><select id="nCassetteRatio">' + casOpts + '</select></div>';
+          if(curCas !== '1:8'){
+            var curCasPort = n.portMode || 'tap';
+            html += '<div class="field-row"><label>Active Output Leg</label><select id="nPortMode">' +
+              '<option value="tap"'+(curCasPort==='tap'?' selected':'')+'>Tap / Drop leg ('+CASSETTE_RATIOS[curCas].tap+' dB)</option>' +
+              '<option value="thru"'+(curCasPort==='thru'?' selected':'')+'>Through / Express leg ('+CASSETTE_RATIOS[curCas].thru+' dB)</option>' +
+              '</select></div>';
+          }
         }
-        var splitLabel = n.type==='splitter' ? 'FBT split ratio' : (n.type==='cassette' ? 'Cassette split ratio' : 'Onboard split ratio');
-        html += '<div class="field-row"><label>'+splitLabel+'</label><select id="nSplit">' + ratioOptions + '</select></div>';
 
         var b = nodeBudget(n, tr);
         if(b){
           var col = b.status==='pass' ? '#3ecf7e' : (b.status==='warn' ? '#f2a93b' : (b.status==='fail' ? '#ef5b6f' : '#38bdf8'));
-          var stagesTxt = b.stages.length ? b.stages.map(function(s){return s.name+' (1:'+s.ratio+')';}).join(' → ') : 'none in path';
+          var stagesTxt = b.stages.length ? b.stages.map(function(s){return s.name+' ('+s.ratio+')';}).join(' → ') : 'none in path';
           html += '<div class="db-readout"><div class="big" style="color:'+col+'">'+b.rx.toFixed(2)+' dBm</div>' +
             '<div class="path">Via '+escapeHtml(b.oltName)+' · '+b.distKm.toFixed(2)+' km · '+b.hops+' splice(s)<br>' +
             'Split stages in path: '+escapeHtml(stagesTxt)+' · total split loss '+b.splitLoss.toFixed(1)+' dB';
@@ -1101,7 +1188,15 @@
 
       bindLive('nName', function(v){ n.name=v; renderAll(); scheduleSave(); });
       if(n.type==='olt') bindLiveNum('nTx', function(v){ n.txDbm=v; renderAll(); scheduleSave(); });
-      if(n.type==='nap' || n.type==='splitter' || n.type==='cassette') bindLiveSelect('nSplit', function(v){ n.splitRatio=parseInt(v,10)||0; renderAll(); scheduleSave(); });
+      if(n.type==='nap') bindLiveSelect('nSplit', function(v){ n.splitRatio=parseInt(v,10)||0; renderAll(); scheduleSave(); });
+      if(n.type==='splitter'){
+        bindLiveSelect('nFbtRatio', function(v){ n.fbtRatio=v; renderAll(); scheduleSave(); });
+        bindLiveSelect('nPortMode', function(v){ n.portMode=v; renderAll(); scheduleSave(); });
+      }
+      if(n.type==='cassette'){
+        bindLiveSelect('nCassetteRatio', function(v){ n.cassetteRatio=v; renderAll(); scheduleSave(); });
+        bindLiveSelect('nPortMode', function(v){ n.portMode=v; renderAll(); scheduleSave(); });
+      }
       if(n.type==='drop') bindLive('nCustomer', function(v){ n.customer=v; scheduleSave(); });
       bindLive('nNotes', function(v){ n.notes=v; scheduleSave(); });
       document.getElementById('btnFlyTo').onclick = function(){ map.flyTo([n.lat,n.lng], Math.max(map.getZoom(),17)); };
@@ -1260,7 +1355,7 @@
       var b = (n.type==='nap' || n.type==='splitter' || n.type==='cassette') ? nodeBudget(n, tr) : null;
       rows.push([
         n.name, n.type, n.lat.toFixed(6), n.lng.toFixed(6),
-        n.splitRatio? ('1:'+n.splitRatio):'', b?b.oltName:'', b?b.distKm.toFixed(3):'',
+        (n.type==='nap'||n.type==='splitter'||n.type==='cassette') ? formatSplitLabel(n) : '', b?b.oltName:'', b?b.distKm.toFixed(3):'',
         b?b.hops:'', b?b.rx.toFixed(2):'', b?b.status:'', (n.notes||'').replace(/\n/g,' ')
       ]);
     });
