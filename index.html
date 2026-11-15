@@ -349,6 +349,54 @@
           <button class="tool-btn full" data-tool="cable">⌁ Draw cable route</button>
         </div>
 
+        <div id="buildRatioBox" style="display:none;background:var(--bg-2);border:1px solid var(--teal);border-radius:8px;padding:10px;margin-bottom:14px;">
+          <div id="buildFbtWrap" style="display:none;">
+            <div class="field-row" style="margin-bottom:8px;">
+              <label style="color:var(--teal);">FBT Splitter Ratio (Default para sa i-place)</label>
+              <select id="buildFbtRatio">
+                <option value="50/50">50/50 (Tap: 3.4 dB / Thru: 3.4 dB)</option>
+                <option value="40/60">40/60 (Tap: 4.4 dB / Thru: 2.5 dB)</option>
+                <option value="30/70">30/70 (Tap: 5.7 dB / Thru: 1.8 dB)</option>
+                <option value="20/80">20/80 (Tap: 7.4 dB / Thru: 1.1 dB)</option>
+                <option value="10/90">10/90 (Tap: 10.5 dB / Thru: 0.6 dB)</option>
+                <option value="2/98">2/98 (Tap: 17.5 dB / Thru: 0.2 dB)</option>
+              </select>
+            </div>
+            <div class="field-row" style="margin-bottom:0;">
+              <label>Output Leg Mode</label>
+              <select id="buildFbtPort">
+                <option value="tap">Tap / Drop leg</option>
+                <option value="thru">Through / Express leg</option>
+              </select>
+            </div>
+          </div>
+          <div id="buildCasWrap" style="display:none;">
+            <div class="field-row" style="margin-bottom:8px;">
+              <label style="color:#ec4899;">Cassette Ratio (92 down to 50 &amp; 1:8)</label>
+              <select id="buildCasRatio">
+                <option value="92/8">92/8 (Tap: 11.5 dB / Thru: 0.8 dB)</option>
+                <option value="90/10">90/10 (Tap: 10.5 dB / Thru: 1.0 dB)</option>
+                <option value="85/15">85/15 (Tap: 8.5 dB / Thru: 1.8 dB)</option>
+                <option value="80/20">80/20 (Tap: 7.4 dB / Thru: 2.2 dB)</option>
+                <option value="75/25">75/25 (Tap: 6.2 dB / Thru: 2.8 dB)</option>
+                <option value="70/30">70/30 (Tap: 5.7 dB / Thru: 3.2 dB)</option>
+                <option value="65/35">65/35 (Tap: 4.9 dB / Thru: 4.0 dB)</option>
+                <option value="60/40">60/40 (Tap: 4.4 dB / Thru: 4.4 dB)</option>
+                <option value="55/45">55/45 (Tap: 3.8 dB / Thru: 5.0 dB)</option>
+                <option value="50/50">50/50 (Tap: 3.4 dB / Thru: 3.4 dB)</option>
+                <option value="1:8" selected>1:8 (Walay ratio / Equal - 10.6 dB)</option>
+              </select>
+            </div>
+            <div class="field-row" id="buildCasPortWrap" style="display:none;margin-bottom:0;">
+              <label>Output Leg Mode</label>
+              <select id="buildCasPort">
+                <option value="tap">Tap / Drop leg</option>
+                <option value="thru">Through / Express leg</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
         <div class="hint-box" id="drawHint">
           <span id="drawHintText">Tap a start node (OLT / pole / NAP)…</span>
           <button id="cancelDraw">Cancel</button>
@@ -610,9 +658,9 @@
       lat:lat, lng:lng, notes:'',
       txDbm: type==='olt' ? settings.txDbm : undefined,
       splitRatio: type==='nap' ? 8 : undefined,
-      fbtRatio: type==='splitter' ? '50/50' : undefined,
-      cassetteRatio: type==='cassette' ? '1:8' : undefined,
-      portMode: (type==='splitter' || type==='cassette') ? 'tap' : undefined,
+      fbtRatio: type==='splitter' ? (document.getElementById('buildFbtRatio') ? document.getElementById('buildFbtRatio').value : '50/50') : undefined,
+      cassetteRatio: type==='cassette' ? (document.getElementById('buildCasRatio') ? document.getElementById('buildCasRatio').value : '1:8') : undefined,
+      portMode: type==='splitter' ? (document.getElementById('buildFbtPort') ? document.getElementById('buildFbtPort').value : 'tap') : (type==='cassette' ? (document.getElementById('buildCasPort') ? document.getElementById('buildCasPort').value : 'tap') : undefined),
       customer: type==='drop' ? '' : undefined,
     };
     state.nodes[id] = node;
@@ -1105,6 +1153,7 @@
     selectedId = kind+':'+id;
     renderInspector();
     switchTab('inspector');
+    if(window.innerWidth<=760 && activeTool==='select') openSidebarMobile();
   }
   function clearSelection(){ selectedId = null; renderInspector(); }
 
@@ -1257,6 +1306,29 @@
     t.addEventListener('click', function(){ switchTab(t.dataset.tab); });
   });
 
+  function updateBuildRatioBox(){
+    var box = document.getElementById('buildRatioBox');
+    var fbtW = document.getElementById('buildFbtWrap');
+    var casW = document.getElementById('buildCasWrap');
+    if(!box) return;
+    if(activeTool === 'splitter'){
+      box.style.display = 'block';
+      fbtW.style.display = 'block';
+      casW.style.display = 'none';
+    } else if(activeTool === 'cassette'){
+      box.style.display = 'block';
+      fbtW.style.display = 'none';
+      casW.style.display = 'block';
+      var cr = document.getElementById('buildCasRatio').value;
+      document.getElementById('buildCasPortWrap').style.display = (cr !== '1:8') ? 'block' : 'none';
+    } else {
+      box.style.display = 'none';
+    }
+  }
+  if(document.getElementById('buildCasRatio')){
+    document.getElementById('buildCasRatio').addEventListener('change', updateBuildRatioBox);
+  }
+
   document.querySelectorAll('.tool-btn').forEach(function(btn){
     btn.addEventListener('click', function(){
       if(activeTool==='cable' && drawState) cancelDraw();
@@ -1264,7 +1336,12 @@
       document.querySelectorAll('.tool-btn').forEach(function(b){ b.classList.toggle('active', b===btn); });
       document.getElementById('map').style.cursor = activeTool==='select' ? '' : 'crosshair';
       if(activeTool!=='cable') updateDrawHint();
-      closeSidebarMobile();
+      updateBuildRatioBox();
+      if(activeTool !== 'splitter' && activeTool !== 'cassette'){
+        closeSidebarMobile();
+      } else {
+        toast('Pili una og ratio sa ubos, dayon i-tap ang mapa');
+      }
     });
   });
   document.getElementById('cancelDraw').addEventListener('click', cancelDraw);
