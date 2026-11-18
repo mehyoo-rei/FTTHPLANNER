@@ -363,6 +363,10 @@
               <label style="color:var(--teal);">FBT Splitter Ratio (default para sa i-place)</label>
               <select id="buildFbtRatio"></select>
             </div>
+            <div class="field-row" style="margin-bottom:8px;">
+              <label>Actual input sa main line (dBm) - optional</label>
+              <input type="number" id="buildFbtInput" step="0.1" placeholder="+5 (default)">
+            </div>
             <div class="ratio-readout" id="buildFbtReadout"></div>
             <div class="field-row" style="margin:8px 0 0;">
               <label>Output Leg Mode</label>
@@ -535,18 +539,33 @@
     return '';
   }
 
-  function legReadingTxt(loss){ var v = 5 - loss; return (v>=0 ? '+' : '') + v.toFixed(1) + ' dBm'; }
+  function fmtDbm(v){ return (v >= 0 ? '+' : '') + v.toFixed(1); }
+  // Actual Input (dBm) - Loss (dB) = Output Reading (dBm). Default input = +5 dBm (used by the reference tables)
+  function legReadingTxt(loss, input){
+    var base = (typeof input === 'number' && !isNaN(input)) ? input : 5;
+    return fmtDbm(base - loss) + ' dBm';
+  }
 
   // "ratio = dB" readout shown under the ratio selectors
-  function ratioReadoutHtml(r, isEqual, mode, kind){
+  function ratioReadoutHtml(r, isEqual, mode, kind, input){
     if(isEqual) return '1x8 Equal split: <b>' + r.tap.toFixed(1) + ' dB</b> matag port';
     var t = (mode === 'thru');
     if(kind === 'fbt'){
-      return 'Left leg (gamay nga %): <b>' + r.tap.toFixed(1) + ' dB</b> &rarr; ' + legReadingTxt(r.tap) + ' @ +5 dBm' + (!t ? ' &#9664; gigamit' : '') +
-        '<br>Right leg (dako nga %): <b>' + r.thru.toFixed(1) + ' dB</b> &rarr; ' + legReadingTxt(r.thru) + ' @ +5 dBm' + (t ? ' &#9664; gigamit' : '');
+      var inp = (typeof input === 'number' && !isNaN(input)) ? input : 5;
+      return 'Input <b>' + fmtDbm(inp) + ' dBm</b> &minus; Loss = Output<br>' +
+        'Left leg (gamay nga %): <b>' + r.tap.toFixed(1) + ' dB</b> &rarr; <b>' + legReadingTxt(r.tap, inp) + '</b>' + (!t ? ' &#9664; gigamit' : '') +
+        '<br>Right leg (dako nga %): <b>' + r.thru.toFixed(1) + ' dB</b> &rarr; <b>' + legReadingTxt(r.thru, inp) + '</b>' + (t ? ' &#9664; gigamit' : '');
     }
     return 'Tap leg (gamay nga %): <b>' + r.tap.toFixed(1) + ' dB</b>' + (!t ? ' &#9664; gigamit' : '') +
       '<br>Thru leg (dako nga %): <b>' + r.thru.toFixed(1) + ' dB</b>' + (t ? ' &#9664; gigamit' : '');
+  }
+
+  // which input reading to use for an FBT node: typed value > budget-computed > +5 default
+  function fbtInputFor(n, tr){
+    if(typeof n.inputDbm === 'number' && !isNaN(n.inputDbm)) return {inp:n.inputDbm, src:'imong gi-type'};
+    var b = nodeBudget(n, tr);
+    if(b) return {inp: b.rx + getSplitterLoss(n, n.portMode === 'thru'), src:'gikan sa budget (OLT padulong dinhi)'};
+    return {inp:5, src:'default +5 dBm (wala pa konektado)'};
   }
 
   function lossTableHtml(){
@@ -684,6 +703,10 @@
       portMode: type==='splitter' ? (document.getElementById('buildFbtPort') ? document.getElementById('buildFbtPort').value : 'tap') : (type==='cassette' ? (document.getElementById('buildCasPort') ? document.getElementById('buildCasPort').value : 'tap') : undefined),
       customer: type==='drop' ? '' : undefined,
     };
+    if(type==='splitter'){
+      var ivEl = document.getElementById('buildFbtInput');
+      if(ivEl && ivEl.value !== '' && !isNaN(parseFloat(ivEl.value))) node.inputDbm = parseFloat(ivEl.value);
+    }
     state.nodes[id] = node;
     renderAll();
     scheduleSave();
@@ -1177,6 +1200,23 @@
   function clearSelection(){ selectedId = null; renderInspector(); }
 
   function renderInspector(){
+    var host = document.getElementById('inspectorContent');
+    var ae = document.activeElement, aeId = null, sel = null;
+    try{
+      if(ae && ae.id && host.contains(ae) && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')){
+        aeId = ae.id;
+        if(typeof ae.selectionStart === 'number') sel = [ae.selectionStart, ae.selectionEnd];
+      }
+    }catch(e){}
+    renderInspectorInner();
+    if(aeId){
+      var ne = document.getElementById(aeId);
+      if(ne && ne !== ae){
+        try{ ne.focus(); if(sel && typeof ne.setSelectionRange === 'function') ne.setSelectionRange(sel[0], sel[1]); }catch(e){}
+      }
+    }
+  }
+  function renderInspectorInner(){
     var el = document.getElementById('inspectorContent');
     if(!selectedId){
       el.innerHTML = '<div class="inspector-empty"><div class="ic-big">◎</div>Tap a node or cable on the map<br>to inspect and edit it.</div>';
@@ -1210,7 +1250,10 @@
             return '<option value="'+k+'"'+(curFbt===k?' selected':'')+'>'+k+' (Left: '+info.tapTxt+' dB / Right: '+info.thruTxt+' dB)</option>';
           }).join('');
           html += '<div class="field-row"><label>FBT Splitter Ratio</label><select id="nFbtRatio">' + fbtOpts + '</select></div>';
-          html += '<div class="ratio-readout" style="margin-bottom:12px;">' + ratioReadoutHtml(FBT_RATIOS[curFbt], false, n.portMode, 'fbt') + '</div>';
+          var fi = fbtInputFor(n, tr);
+          html += '<div class="field-row"><label>Actual input reading (dBm) - optional</label><input type="number" id="nInputDbm" step="0.1" placeholder="auto: ' + fmtDbm(fi.inp) + '" value="' + (typeof n.inputDbm === 'number' ? n.inputDbm : '') + '"></div>';
+          html += '<div class="ratio-readout" id="nRatioReadout" style="margin-bottom:12px;">' + ratioReadoutHtml(FBT_RATIOS[curFbt], false, n.portMode, 'fbt', fi.inp) +
+            '<br><span style="color:var(--text-2)">Input: ' + fi.src + '</span></div>';
           var curPort = n.portMode || 'tap';
           html += '<div class="field-row"><label>Active Output Leg</label><select id="nPortMode">' +
             '<option value="tap"'+(curPort==='tap'?' selected':'')+'>Left leg - Tap / Drop ('+FBT_RATIOS[curFbt].tap.toFixed(1)+' dB)</option>' +
@@ -1261,6 +1304,20 @@
       if(n.type==='nap') bindLiveSelect('nSplit', function(v){ n.splitRatio=parseInt(v,10)||0; renderAll(); scheduleSave(); });
       if(n.type==='splitter'){
         bindLiveSelect('nFbtRatio', function(v){ n.fbtRatio=v; renderAll(); scheduleSave(); });
+        var inEl = document.getElementById('nInputDbm');
+        if(inEl){
+          inEl.addEventListener('input', function(){
+            var v = parseFloat(inEl.value);
+            if(isNaN(v)) delete n.inputDbm; else n.inputDbm = v;
+            var rd = document.getElementById('nRatioReadout');
+            if(rd){
+              var fi2 = fbtInputFor(n, computeTrace());
+              rd.innerHTML = ratioReadoutHtml(getFbt(n), false, n.portMode, 'fbt', fi2.inp) + '<br><span style="color:var(--text-2)">Input: ' + fi2.src + '</span>';
+            }
+            scheduleSave();
+          });
+          inEl.addEventListener('change', function(){ renderAll(); });
+        }
         bindLiveSelect('nPortMode', function(v){ n.portMode=v; renderAll(); scheduleSave(); });
       }
       if(n.type==='cassette'){
@@ -1347,7 +1404,8 @@
     var fv = document.getElementById('buildFbtRatio').value;
     var cv = document.getElementById('buildCasRatio').value;
     if(FBT_RATIOS[fv]){
-      document.getElementById('buildFbtReadout').innerHTML = ratioReadoutHtml(FBT_RATIOS[fv], false, document.getElementById('buildFbtPort').value, 'fbt');
+      var iv = parseFloat(document.getElementById('buildFbtInput').value);
+      document.getElementById('buildFbtReadout').innerHTML = ratioReadoutHtml(FBT_RATIOS[fv], false, document.getElementById('buildFbtPort').value, 'fbt', isNaN(iv) ? 5 : iv);
     }
     if(CASSETTE_RATIOS[cv]){
       document.getElementById('buildCasReadout').innerHTML = ratioReadoutHtml(CASSETTE_RATIOS[cv], cv==='1:8', document.getElementById('buildCasPort').value);
@@ -1372,6 +1430,7 @@
     document.getElementById(id).addEventListener('change', refreshBuildReadouts);
   });
   document.getElementById('buildCasRatio').addEventListener('change', updateBuildRatioBox);
+  document.getElementById('buildFbtInput').addEventListener('input', refreshBuildReadouts);
 
   document.querySelectorAll('.tool-btn').forEach(function(btn){
     btn.addEventListener('click', function(){
