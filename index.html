@@ -271,6 +271,14 @@
   }
   .toast.show{opacity:1;}
 
+  .ratio-readout{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--text-1);background:var(--bg-1);border:1px solid var(--border);border-radius:6px;padding:7px 9px;line-height:1.7;}
+  .ratio-readout b{color:var(--text-0);}
+  .loss-details{background:var(--bg-2);border:1px solid var(--border);border-radius:8px;padding:9px 10px;margin-bottom:14px;}
+  .loss-details summary{cursor:pointer;font-size:11.5px;color:var(--text-1);}
+  .loss-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:10.5px;font-family:'IBM Plex Mono',monospace;}
+  .loss-table th,.loss-table td{border-bottom:1px solid var(--border-soft);padding:5px 3px;text-align:left;}
+  .loss-table th{color:var(--text-2);font-weight:500;}
+  .loss-note{font-size:10px;color:var(--text-2);margin-top:6px;line-height:1.4;}
   .sidebar-close{display:none;}
 
   @media (max-width:760px){
@@ -352,42 +360,25 @@
         <div id="buildRatioBox" style="display:none;background:var(--bg-2);border:1px solid var(--teal);border-radius:8px;padding:10px;margin-bottom:14px;">
           <div id="buildFbtWrap" style="display:none;">
             <div class="field-row" style="margin-bottom:8px;">
-              <label style="color:var(--teal);">FBT Splitter Ratio (Default para sa i-place)</label>
-              <select id="buildFbtRatio">
-                <option value="50/50">50/50 (Tap: 3.4 dB / Thru: 3.4 dB)</option>
-                <option value="40/60">40/60 (Tap: 4.4 dB / Thru: 2.5 dB)</option>
-                <option value="30/70">30/70 (Tap: 5.7 dB / Thru: 1.8 dB)</option>
-                <option value="20/80">20/80 (Tap: 7.4 dB / Thru: 1.1 dB)</option>
-                <option value="10/90">10/90 (Tap: 10.5 dB / Thru: 0.6 dB)</option>
-                <option value="2/98">2/98 (Tap: 17.5 dB / Thru: 0.2 dB)</option>
-              </select>
+              <label style="color:var(--teal);">FBT Splitter Ratio (default para sa i-place)</label>
+              <select id="buildFbtRatio"></select>
             </div>
-            <div class="field-row" style="margin-bottom:0;">
+            <div class="ratio-readout" id="buildFbtReadout"></div>
+            <div class="field-row" style="margin:8px 0 0;">
               <label>Output Leg Mode</label>
               <select id="buildFbtPort">
-                <option value="tap">Tap / Drop leg</option>
-                <option value="thru">Through / Express leg</option>
+                <option value="tap">Left leg - Tap / Drop</option>
+                <option value="thru">Right leg - Thru / Express</option>
               </select>
             </div>
           </div>
           <div id="buildCasWrap" style="display:none;">
             <div class="field-row" style="margin-bottom:8px;">
-              <label style="color:#ec4899;">Cassette Ratio (92 down to 50 &amp; 1:8)</label>
-              <select id="buildCasRatio">
-                <option value="92/8">92/8 (Tap: 11.5 dB / Thru: 0.8 dB)</option>
-                <option value="90/10">90/10 (Tap: 10.5 dB / Thru: 1.0 dB)</option>
-                <option value="85/15">85/15 (Tap: 8.5 dB / Thru: 1.8 dB)</option>
-                <option value="80/20">80/20 (Tap: 7.4 dB / Thru: 2.2 dB)</option>
-                <option value="75/25">75/25 (Tap: 6.2 dB / Thru: 2.8 dB)</option>
-                <option value="70/30">70/30 (Tap: 5.7 dB / Thru: 3.2 dB)</option>
-                <option value="65/35">65/35 (Tap: 4.9 dB / Thru: 4.0 dB)</option>
-                <option value="60/40">60/40 (Tap: 4.4 dB / Thru: 4.4 dB)</option>
-                <option value="55/45">55/45 (Tap: 3.8 dB / Thru: 5.0 dB)</option>
-                <option value="50/50">50/50 (Tap: 3.4 dB / Thru: 3.4 dB)</option>
-                <option value="1:8" selected>1:8 (Walay ratio / Equal - 10.6 dB)</option>
-              </select>
+              <label style="color:#ec4899;">Cassette 1x8 Ratio</label>
+              <select id="buildCasRatio"></select>
             </div>
-            <div class="field-row" id="buildCasPortWrap" style="display:none;margin-bottom:0;">
+            <div class="ratio-readout" id="buildCasReadout"></div>
+            <div class="field-row" id="buildCasPortWrap" style="display:none;margin:8px 0 0;">
               <label>Output Leg Mode</label>
               <select id="buildCasPort">
                 <option value="tap">Tap / Drop leg</option>
@@ -396,6 +387,8 @@
             </div>
           </div>
         </div>
+
+        <div id="lossTableWrap"></div>
 
         <div class="hint-box" id="drawHint">
           <span id="drawHintText">Tap a start node (OLT / pole / NAP)…</span>
@@ -492,59 +485,87 @@
   var lastTopoRefresh = null;
 
   var SPLIT_LOSS = {2:3.7,4:7.3,8:10.6,16:14.0,32:17.5,64:21.5};
-  // FBT Tap/Thru ratios: {label: {tap: dB, thru: dB}}
+
+  // Standard insertion loss table (Cassette / FBT coupler). tap = gamay nga %, thru = dako nga %.
+  // Numeric values (used in the budget) take the higher end of each range to stay conservative.
+  var COUPLER_TABLE = {
+    '50/50': {tap:3.4,  thru:3.4, tapTxt:'~3.2-3.4',   thruTxt:'~3.2-3.4'},
+    '40/60': {tap:4.3,  thru:2.5, tapTxt:'~4.3',       thruTxt:'~2.5'},
+    '30/70': {tap:5.5,  thru:1.8, tapTxt:'~5.5',       thruTxt:'~1.8'},
+    '20/80': {tap:7.3,  thru:1.2, tapTxt:'~7.3',       thruTxt:'~1.2'},
+    '10/90': {tap:10.5, thru:0.7, tapTxt:'~10.5',      thruTxt:'~0.7'},
+    '2/98':  {tap:18.0, thru:0.3, tapTxt:'~17.5-18.0', thruTxt:'~0.2-0.3'}
+  };
+  // FBT splitter: LEFT (gamay %) / RIGHT (dako %) loss in dB. tap = LEFT, thru = RIGHT.
   var FBT_RATIOS = {
-    '50/50': {tap: 3.4, thru: 3.4},
-    '40/60': {tap: 4.4, thru: 2.5},
-    '30/70': {tap: 5.7, thru: 1.8},
-    '20/80': {tap: 7.4, thru: 1.1},
-    '10/90': {tap: 10.5, thru: 0.6},
-    '2/98':  {tap: 17.5, thru: 0.2}
+    '50/50': {tap:3.1,  thru:3.1},
+    '40/60': {tap:4.1,  thru:2.3},
+    '30/70': {tap:5.3,  thru:1.6},
+    '20/80': {tap:7.0,  thru:1.0},
+    '10/90': {tap:10.2, thru:0.5},
+    '2/98':  {tap:17.2, thru:0.2}
   };
-  // Cassette (Unbalanced 1:8 + Tap/Thru or Standard 1:8)
-  // Using 1:8 base insertion loss (~10.5 dB) + tap/thru ratio loss, or standard 1:8 (10.6 dB)
-  var CASSETTE_RATIOS = {
-    '92/8':  {tap: 11.5, thru: 0.8},
-    '90/10': {tap: 10.5, thru: 1.0},
-    '85/15': {tap: 8.5,  thru: 1.8},
-    '80/20': {tap: 7.4,  thru: 2.2},
-    '75/25': {tap: 6.2,  thru: 2.8},
-    '70/30': {tap: 5.7,  thru: 3.2},
-    '65/35': {tap: 4.9,  thru: 4.0},
-    '60/40': {tap: 4.4,  thru: 4.4},
-    '55/45': {tap: 3.8,  thru: 5.0},
-    '50/50': {tap: 3.4,  thru: 3.4},
-    '1:8':   {tap: 10.6, thru: 10.6}
-  };
+  Object.keys(FBT_RATIOS).forEach(function(k){
+    FBT_RATIOS[k].tapTxt = '~' + FBT_RATIOS[k].tap.toFixed(1);
+    FBT_RATIOS[k].thruTxt = '~' + FBT_RATIOS[k].thru.toFixed(1);
+  });
+  // Cassette 1x8: equal split (1:8) or unequal tap/thru ratio from the same table
+  var CASSETTE_RATIOS = {'1:8': {tap:10.6, thru:10.6, tapTxt:'10.6', thruTxt:'10.6'}};
+  Object.keys(COUPLER_TABLE).forEach(function(k){ CASSETTE_RATIOS[k] = COUPLER_TABLE[k]; });
+
+  function getFbt(n){ return FBT_RATIOS[n.fbtRatio] || FBT_RATIOS['50/50']; }
+  function getCas(n){ return CASSETTE_RATIOS[n.cassetteRatio] || CASSETTE_RATIOS['1:8']; }
 
   function getSplitterLoss(n, isThru){
     if(!n) return 0;
-    if(n.type === 'nap'){
-      return n.splitRatio ? (SPLIT_LOSS[n.splitRatio] || 0) : 0;
-    }
-    if(n.type === 'splitter'){
-      var r = FBT_RATIOS[n.fbtRatio || '50/50'];
-      if(!r) return 0;
-      return isThru ? r.thru : r.tap;
-    }
-    if(n.type === 'cassette'){
-      var c = CASSETTE_RATIOS[n.cassetteRatio || '1:8'];
-      if(!c) return 0;
-      return isThru ? c.thru : c.tap;
-    }
+    if(n.type === 'nap') return n.splitRatio ? (SPLIT_LOSS[n.splitRatio] || 0) : 0;
+    if(n.type === 'splitter'){ var r = getFbt(n); return isThru ? r.thru : r.tap; }
+    if(n.type === 'cassette'){ var c = getCas(n); return isThru ? c.thru : c.tap; }
     return 0;
   }
 
   function formatSplitLabel(n){
     if(n.type === 'nap') return n.splitRatio ? ('1:' + n.splitRatio) : 'passthrough';
-    if(n.type === 'splitter') return (n.fbtRatio || '50/50') + (n.portMode === 'thru' ? ' (Thru)' : ' (Tap)');
+    if(n.type === 'splitter') return (FBT_RATIOS[n.fbtRatio] ? n.fbtRatio : '50/50') + (n.portMode === 'thru' ? ' (Thru)' : ' (Tap)');
     if(n.type === 'cassette'){
-      var cr = n.cassetteRatio || '1:8';
+      var cr = CASSETTE_RATIOS[n.cassetteRatio] ? n.cassetteRatio : '1:8';
       if(cr === '1:8') return '1:8 (Equal)';
       return cr + (n.portMode === 'thru' ? ' (Thru)' : ' (Tap)');
     }
     return '';
   }
+
+  function legReadingTxt(loss){ var v = 5 - loss; return (v>=0 ? '+' : '') + v.toFixed(1) + ' dBm'; }
+
+  // "ratio = dB" readout shown under the ratio selectors
+  function ratioReadoutHtml(r, isEqual, mode, kind){
+    if(isEqual) return '1x8 Equal split: <b>' + r.tap.toFixed(1) + ' dB</b> matag port';
+    var t = (mode === 'thru');
+    if(kind === 'fbt'){
+      return 'Left leg (gamay nga %): <b>' + r.tap.toFixed(1) + ' dB</b> &rarr; ' + legReadingTxt(r.tap) + ' @ +5 dBm' + (!t ? ' &#9664; gigamit' : '') +
+        '<br>Right leg (dako nga %): <b>' + r.thru.toFixed(1) + ' dB</b> &rarr; ' + legReadingTxt(r.thru) + ' @ +5 dBm' + (t ? ' &#9664; gigamit' : '');
+    }
+    return 'Tap leg (gamay nga %): <b>' + r.tap.toFixed(1) + ' dB</b>' + (!t ? ' &#9664; gigamit' : '') +
+      '<br>Thru leg (dako nga %): <b>' + r.thru.toFixed(1) + ' dB</b>' + (t ? ' &#9664; gigamit' : '');
+  }
+
+  function lossTableHtml(){
+    var casRows = Object.keys(COUPLER_TABLE).map(function(k){
+      var r = COUPLER_TABLE[k];
+      return '<tr><td>'+k+'</td><td>'+r.tapTxt+' dB</td><td>'+r.thruTxt+' dB</td></tr>';
+    }).join('');
+    var fbtRows = Object.keys(FBT_RATIOS).map(function(k){
+      var r = FBT_RATIOS[k];
+      return '<tr><td>'+k+'</td><td>'+r.tapTxt+'</td><td>'+r.thruTxt+'</td><td>'+legReadingTxt(r.tap)+'</td><td>'+legReadingTxt(r.thru)+'</td></tr>';
+    }).join('');
+    return '<details class="loss-details"><summary>FBT Splitter Loss Table (Left / Right)</summary>' +
+      '<table class="loss-table"><tr><th>Left/Right</th><th>L dB</th><th>R dB</th><th>L @+5</th><th>R @+5</th></tr>' + fbtRows + '</table>' +
+      '<div class="loss-note">Left = gamay nga %, Right = dako nga %. Ang reading kay sa +5 dBm nga input.</div></details>' +
+      '<details class="loss-details"><summary>Cassette Insertion Loss Table (Tap / Thru)</summary>' +
+      '<table class="loss-table"><tr><th>Split ratio</th><th>Tap (gamay %)</th><th>Thru (dako %)</th></tr>' + casRows + '</table>' +
+      '<div class="loss-note">Sa budget, gigamit ang taas nga bahin sa range (conservative). Ang 1:8 equal kay 10.6 dB matag port.</div></details>';
+  }
+
   var PALETTE = ['#17c3b2','#f2a93b','#8b7cf6','#5aa9ff','#ef5b6f','#3ecf7e'];
 
   function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,9); }
@@ -658,8 +679,8 @@
       lat:lat, lng:lng, notes:'',
       txDbm: type==='olt' ? settings.txDbm : undefined,
       splitRatio: type==='nap' ? 8 : undefined,
-      fbtRatio: type==='splitter' ? (document.getElementById('buildFbtRatio') ? document.getElementById('buildFbtRatio').value : '50/50') : undefined,
-      cassetteRatio: type==='cassette' ? (document.getElementById('buildCasRatio') ? document.getElementById('buildCasRatio').value : '1:8') : undefined,
+      fbtRatio: type==='splitter' ? (document.getElementById('buildFbtRatio') && document.getElementById('buildFbtRatio').value ? document.getElementById('buildFbtRatio').value : '50/50') : undefined,
+      cassetteRatio: type==='cassette' ? (document.getElementById('buildCasRatio') && document.getElementById('buildCasRatio').value ? document.getElementById('buildCasRatio').value : '1:8') : undefined,
       portMode: type==='splitter' ? (document.getElementById('buildFbtPort') ? document.getElementById('buildFbtPort').value : 'tap') : (type==='cassette' ? (document.getElementById('buildCasPort') ? document.getElementById('buildCasPort').value : 'tap') : undefined),
       customer: type==='drop' ? '' : undefined,
     };
@@ -826,12 +847,10 @@
     }
     chain.reverse();
     var loss = 0, stages = [];
-    chain.forEach(function(id, idx){
+    chain.forEach(function(id){
       var n = state.nodes[id];
       if(!n) return;
       if(n.type==='nap' || n.type==='splitter' || n.type==='cassette'){
-        // If this node is an intermediate pass-through to a downstream node in the chain,
-        // use its configured portMode (or 'thru' if explicitly set, defaulting to node's portMode).
         var isThru = (n.portMode === 'thru');
         var l = getSplitterLoss(n, isThru);
         if(l > 0){
@@ -1185,30 +1204,32 @@
           ratioOptions = '<option value="0"'+(!n.splitRatio?' selected':'')+'>None (passthrough)</option>' + ratioOptions;
           html += '<div class="field-row"><label>Onboard split ratio</label><select id="nSplit">' + ratioOptions + '</select></div>';
         } else if(n.type==='splitter'){
-          var curFbt = n.fbtRatio || '50/50';
+          var curFbt = FBT_RATIOS[n.fbtRatio] ? n.fbtRatio : '50/50';
           var fbtOpts = Object.keys(FBT_RATIOS).map(function(k){
             var info = FBT_RATIOS[k];
-            return '<option value="'+k+'"'+(curFbt===k?' selected':'')+'>'+k+' (Tap: '+info.tap+' dB / Thru: '+info.thru+' dB)</option>';
+            return '<option value="'+k+'"'+(curFbt===k?' selected':'')+'>'+k+' (Left: '+info.tapTxt+' dB / Right: '+info.thruTxt+' dB)</option>';
           }).join('');
           html += '<div class="field-row"><label>FBT Splitter Ratio</label><select id="nFbtRatio">' + fbtOpts + '</select></div>';
+          html += '<div class="ratio-readout" style="margin-bottom:12px;">' + ratioReadoutHtml(FBT_RATIOS[curFbt], false, n.portMode, 'fbt') + '</div>';
           var curPort = n.portMode || 'tap';
           html += '<div class="field-row"><label>Active Output Leg</label><select id="nPortMode">' +
-            '<option value="tap"'+(curPort==='tap'?' selected':'')+'>Tap / Drop leg ('+FBT_RATIOS[curFbt].tap+' dB)</option>' +
-            '<option value="thru"'+(curPort==='thru'?' selected':'')+'>Through / Express leg ('+FBT_RATIOS[curFbt].thru+' dB)</option>' +
+            '<option value="tap"'+(curPort==='tap'?' selected':'')+'>Left leg - Tap / Drop ('+FBT_RATIOS[curFbt].tap.toFixed(1)+' dB)</option>' +
+            '<option value="thru"'+(curPort==='thru'?' selected':'')+'>Right leg - Thru / Express ('+FBT_RATIOS[curFbt].thru.toFixed(1)+' dB)</option>' +
             '</select></div>';
         } else if(n.type==='cassette'){
-          var curCas = n.cassetteRatio || '1:8';
+          var curCas = CASSETTE_RATIOS[n.cassetteRatio] ? n.cassetteRatio : '1:8';
           var casOpts = Object.keys(CASSETTE_RATIOS).map(function(k){
             var info = CASSETTE_RATIOS[k];
-            var lbl = k === '1:8' ? '1:8 (Walay ratio / Equal - 10.6 dB)' : (k + ' (Tap: '+info.tap+' dB / Thru: '+info.thru+' dB)');
+            var lbl = k === '1:8' ? '1:8 Equal (10.6 dB matag port)' : (k + ' (Tap: '+info.tapTxt+' dB / Thru: '+info.thruTxt+' dB)');
             return '<option value="'+k+'"'+(curCas===k?' selected':'')+'>'+lbl+'</option>';
           }).join('');
-          html += '<div class="field-row"><label>Cassette Ratio</label><select id="nCassetteRatio">' + casOpts + '</select></div>';
+          html += '<div class="field-row"><label>Cassette 1x8 Ratio</label><select id="nCassetteRatio">' + casOpts + '</select></div>';
+          html += '<div class="ratio-readout" style="margin-bottom:12px;">' + ratioReadoutHtml(CASSETTE_RATIOS[curCas], curCas==='1:8', n.portMode) + '</div>';
           if(curCas !== '1:8'){
             var curCasPort = n.portMode || 'tap';
             html += '<div class="field-row"><label>Active Output Leg</label><select id="nPortMode">' +
-              '<option value="tap"'+(curCasPort==='tap'?' selected':'')+'>Tap / Drop leg ('+CASSETTE_RATIOS[curCas].tap+' dB)</option>' +
-              '<option value="thru"'+(curCasPort==='thru'?' selected':'')+'>Through / Express leg ('+CASSETTE_RATIOS[curCas].thru+' dB)</option>' +
+              '<option value="tap"'+(curCasPort==='tap'?' selected':'')+'>Tap / Drop leg ('+CASSETTE_RATIOS[curCas].tap.toFixed(1)+' dB)</option>' +
+              '<option value="thru"'+(curCasPort==='thru'?' selected':'')+'>Through / Express leg ('+CASSETTE_RATIOS[curCas].thru.toFixed(1)+' dB)</option>' +
               '</select></div>';
           }
         }
@@ -1243,7 +1264,7 @@
         bindLiveSelect('nPortMode', function(v){ n.portMode=v; renderAll(); scheduleSave(); });
       }
       if(n.type==='cassette'){
-        bindLiveSelect('nCassetteRatio', function(v){ n.cassetteRatio=v; renderAll(); scheduleSave(); });
+        bindLiveSelect('nCassetteRatio', function(v){ n.cassetteRatio=v; if(v==='1:8') n.portMode='tap'; renderAll(); scheduleSave(); });
         bindLiveSelect('nPortMode', function(v){ n.portMode=v; renderAll(); scheduleSave(); });
       }
       if(n.type==='drop') bindLive('nCustomer', function(v){ n.customer=v; scheduleSave(); });
@@ -1306,28 +1327,51 @@
     t.addEventListener('click', function(){ switchTab(t.dataset.tab); });
   });
 
+  function populateRatioUI(){
+    var fbtSel = document.getElementById('buildFbtRatio');
+    fbtSel.innerHTML = Object.keys(FBT_RATIOS).map(function(k){
+      var r = FBT_RATIOS[k];
+      return '<option value="'+k+'">'+k+' (Left: '+r.tapTxt+' dB / Right: '+r.thruTxt+' dB)</option>';
+    }).join('');
+    var casSel = document.getElementById('buildCasRatio');
+    casSel.innerHTML = Object.keys(CASSETTE_RATIOS).map(function(k){
+      var r = CASSETTE_RATIOS[k];
+      var lbl = k === '1:8' ? '1:8 Equal (10.6 dB matag port)' : (k + ' (Tap: '+r.tapTxt+' dB / Thru: '+r.thruTxt+' dB)');
+      return '<option value="'+k+'">'+lbl+'</option>';
+    }).join('');
+    document.getElementById('lossTableWrap').innerHTML = lossTableHtml();
+    refreshBuildReadouts();
+  }
+
+  function refreshBuildReadouts(){
+    var fv = document.getElementById('buildFbtRatio').value;
+    var cv = document.getElementById('buildCasRatio').value;
+    if(FBT_RATIOS[fv]){
+      document.getElementById('buildFbtReadout').innerHTML = ratioReadoutHtml(FBT_RATIOS[fv], false, document.getElementById('buildFbtPort').value, 'fbt');
+    }
+    if(CASSETTE_RATIOS[cv]){
+      document.getElementById('buildCasReadout').innerHTML = ratioReadoutHtml(CASSETTE_RATIOS[cv], cv==='1:8', document.getElementById('buildCasPort').value);
+    }
+  }
+
   function updateBuildRatioBox(){
     var box = document.getElementById('buildRatioBox');
     var fbtW = document.getElementById('buildFbtWrap');
     var casW = document.getElementById('buildCasWrap');
-    if(!box) return;
     if(activeTool === 'splitter'){
-      box.style.display = 'block';
-      fbtW.style.display = 'block';
-      casW.style.display = 'none';
+      box.style.display = 'block'; fbtW.style.display = 'block'; casW.style.display = 'none';
     } else if(activeTool === 'cassette'){
-      box.style.display = 'block';
-      fbtW.style.display = 'none';
-      casW.style.display = 'block';
-      var cr = document.getElementById('buildCasRatio').value;
-      document.getElementById('buildCasPortWrap').style.display = (cr !== '1:8') ? 'block' : 'none';
+      box.style.display = 'block'; fbtW.style.display = 'none'; casW.style.display = 'block';
+      document.getElementById('buildCasPortWrap').style.display = (document.getElementById('buildCasRatio').value !== '1:8') ? 'block' : 'none';
     } else {
       box.style.display = 'none';
     }
+    refreshBuildReadouts();
   }
-  if(document.getElementById('buildCasRatio')){
-    document.getElementById('buildCasRatio').addEventListener('change', updateBuildRatioBox);
-  }
+  ['buildFbtRatio','buildFbtPort','buildCasPort'].forEach(function(id){
+    document.getElementById(id).addEventListener('change', refreshBuildReadouts);
+  });
+  document.getElementById('buildCasRatio').addEventListener('change', updateBuildRatioBox);
 
   document.querySelectorAll('.tool-btn').forEach(function(btn){
     btn.addEventListener('click', function(){
@@ -1456,6 +1500,7 @@
 
   /* ---------- INIT ---------- */
   async function init(){
+    populateRatioUI();
     initMap();
     wireMouseMove();
     var had = await loadProject();
